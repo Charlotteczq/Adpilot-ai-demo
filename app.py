@@ -764,6 +764,96 @@ def configure_page() -> None:
         unsafe_allow_html=True,
     )
 
+    st.markdown(
+        """
+        <style>
+        /*
+         * Result cards move naturally with the document while keeping
+         * every generated section readable over the painted background.
+         */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            position: relative;
+            overflow: hidden;
+            margin: 1rem 0 1.6rem;
+            padding: 0.35rem;
+            color: #101A2C !important;
+            background:
+                radial-gradient(
+                    ellipse 52% 90% at 100% 0%,
+                    rgba(213, 179, 112, 0.36),
+                    transparent 68%
+                ),
+                linear-gradient(
+                    135deg,
+                    rgba(244, 239, 223, 0.97),
+                    rgba(235, 220, 183, 0.94)
+                ) !important;
+            border: 1px solid rgba(213, 179, 112, 0.82) !important;
+            border-left: 7px solid #D5B370 !important;
+            border-radius: 26px 18px 28px 20px !important;
+            box-shadow:
+                0 18px 42px rgba(16, 26, 44, 0.16),
+                inset 0 1px 0 rgba(255, 255, 255, 0.78) !important;
+            backdrop-filter: blur(12px);
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.10;
+            background-image:
+                repeating-radial-gradient(
+                    ellipse 170px 58px at 20% 24%,
+                    transparent 0 12px,
+                    rgba(17, 40, 77, 0.28) 13px 14px,
+                    transparent 15px 27px
+                );
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {
+            position: relative;
+            z-index: 1;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] h1,
+        div[data-testid="stVerticalBlockBorderWrapper"] h2,
+        div[data-testid="stVerticalBlockBorderWrapper"] h3,
+        div[data-testid="stVerticalBlockBorderWrapper"] h4,
+        div[data-testid="stVerticalBlockBorderWrapper"] p,
+        div[data-testid="stVerticalBlockBorderWrapper"] li,
+        div[data-testid="stVerticalBlockBorderWrapper"] label,
+        div[data-testid="stVerticalBlockBorderWrapper"] span,
+        div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stCaptionContainer"] {
+            color: #101A2C !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] h2 {
+            color: #11284D !important;
+            padding-bottom: 0.55rem;
+            border-bottom: 2px solid rgba(213, 179, 112, 0.62);
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] h3 {
+            color: #264B6F !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] hr {
+            border-color: rgba(38, 75, 111, 0.20) !important;
+        }
+
+        @media (max-width: 700px) {
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                border-left-width: 4px !important;
+                border-radius: 20px 16px 22px 16px !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def normalize_url(url: str) -> str:
     """补齐协议并拒绝明显非法地址。"""
@@ -1416,21 +1506,22 @@ def main() -> None:
     if result and inputs:
         st.divider()
         st.caption(f"本次方案来源：{inputs.get('result_source', '未知')}")
-        render_product_analysis(result)
-        st.divider()
-        render_target_users(result)
-        st.divider()
-        render_ad_copy(result)
-        st.divider()
-        render_platform_tabs(
-            result=result,
-            product_text=inputs["product_text"],
-            total_budget=inputs["budget"],
-            currency=inputs["currency"],
-            unit_price=inputs["unit_price"],
-        )
-        st.divider()
-        render_summary(result)
+        with st.container(border=True):
+            render_product_analysis(result)
+        with st.container(border=True):
+            render_target_users(result)
+        with st.container(border=True):
+            render_ad_copy(result)
+        with st.container(border=True):
+            render_platform_tabs(
+                result=result,
+                product_text=inputs["product_text"],
+                total_budget=inputs["budget"],
+                currency=inputs["currency"],
+                unit_price=inputs["unit_price"],
+            )
+        with st.container(border=True):
+            render_summary(result)
 
 
 if __name__ == "__main__":
