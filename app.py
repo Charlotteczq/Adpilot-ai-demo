@@ -510,12 +510,14 @@ def render_sidebar() -> tuple[str, str, str, str]:
         env_base_url = os.getenv("NEW_API_BASE_URL", "")
         env_model = os.getenv("NEW_API_MODEL", "gpt-4o-mini")
 
-        api_key = st.text_input(
-            "NEW_API_KEY",
-            value=env_key,
+        override_key = st.text_input(
+            "临时 API Key（可选）",
+            value="",
             type="password",
-            help="优先从 .env 自动读取，也可临时在这里输入。",
+            placeholder="服务器已配置时无需填写",
+            help="仅用于本次浏览器会话；服务器中的 Key 不会发送到页面。",
         )
+        api_key = override_key.strip() or env_key.strip()
         base_url = st.text_input(
             "NEW_API_BASE_URL",
             value=env_base_url,
@@ -532,7 +534,10 @@ def render_sidebar() -> tuple[str, str, str, str]:
         if engine_mode == "固定宠物水杯案例":
             st.warning("固定案例会忽略产品输入，只返回预置的宠物饮水杯方案。")
         elif api_key and base_url and model:
-            st.success("API 配置已填写")
+            if override_key.strip():
+                st.success("正在使用本次会话的临时 API Key")
+            else:
+                st.success("API Key 已由服务器安全配置")
         else:
             st.warning("请填写 Key、Base URL 和模型名称后再生成。")
     return api_key.strip(), base_url.strip(), model.strip(), engine_mode
@@ -565,18 +570,27 @@ def main() -> None:
             "测试其他商品时，请切换到“New API 实时生成”。"
         )
 
+    # 来源模式放在表单外，切换时页面会立即重绘并显示对应的链接输入框。
+    source_mode = st.radio(
+        "信息来源模式",
+        ["纯文字", "链接抓取", "联网增强"],
+        horizontal=True,
+        help="联网增强可同时抓取最多 3 个公开参考页面，再交给模型综合分析。",
+    )
+
     with st.form("analysis_form"):
-        source_mode = st.radio(
-            "信息来源模式",
-            ["纯文字", "链接抓取", "联网增强"],
-            horizontal=True,
-            help="联网增强可同时抓取最多 3 个公开参考页面，再交给模型综合分析。",
+        product_label = (
+            "产品信息"
+            if source_mode == "纯文字"
+            else "产品补充信息（可选）"
         )
         product_text = st.text_area(
-            "产品信息",
+            product_label,
             height=150,
             placeholder=(
-                "例如：便携式宠物饮水杯，售价 29.99 美元，防漏、单手操作，"
+                "例如：售价、核心卖点、目标客户或你希望重点强调的信息。"
+                if source_mode != "纯文字"
+                else "例如：便携式宠物饮水杯，售价 29.99 美元，防漏、单手操作，"
                 "希望卖给经常遛狗或携宠旅行的人。"
             ),
         )
@@ -625,8 +639,16 @@ def main() -> None:
         )
 
     if submitted:
-        if not product_text.strip():
+        if source_mode == "纯文字" and not product_text.strip():
             st.error("请至少输入一句产品描述。")
+        elif source_mode == "链接抓取" and not url_text.strip():
+            st.error("请选择“链接抓取”后，在“产品链接”框中填写完整网址。")
+        elif (
+            source_mode == "联网增强"
+            and not product_text.strip()
+            and not url_text.strip()
+        ):
+            st.error("请至少填写产品补充信息或一个公开参考链接。")
         elif not fixed_demo_mode and "*" in api_key:
             st.error(
                 "当前 API Key 包含星号，看起来是被隐藏后的掩码值。"
