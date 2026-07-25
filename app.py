@@ -885,7 +885,7 @@ def main() -> None:
         st.session_state.pop("analysis_inputs", None)
     st.session_state["_analysis_engine"] = engine_mode
 
-   st.markdown(
+    st.markdown(
         """
         <section class="ocean-hero">
             <div class="hero-eyebrow">AI Advertising Intelligence</div>
