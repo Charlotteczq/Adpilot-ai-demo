@@ -399,6 +399,371 @@ def configure_page() -> None:
         unsafe_allow_html=True,
     )
 
+    st.markdown(
+        """
+        <style>
+        /*
+         * Soft oil-paint theme.
+         * Palette: #11284D #264B6F #101A2C #F4EFDF #D5B370
+         */
+        :root {
+            --paint-navy: #11284D;
+            --paint-blue: #264B6F;
+            --paint-ink: #101A2C;
+            --paint-ivory: #F4EFDF;
+            --paint-gold: #D5B370;
+            --paint-mist: #AAB9BF;
+        }
+
+        /* 柔和的油画底色：大色块负责层次，纹理层负责画布质感 */
+        .stApp {
+            background-color: var(--paint-blue) !important;
+            background-image:
+                radial-gradient(
+                    ellipse 58% 34% at 8% 7%,
+                    rgba(244, 239, 223, 0.32) 0 28%,
+                    rgba(244, 239, 223, 0.10) 44%,
+                    transparent 68%
+                ),
+                radial-gradient(
+                    ellipse 48% 30% at 86% 5%,
+                    rgba(213, 179, 112, 0.28) 0 26%,
+                    rgba(213, 179, 112, 0.08) 48%,
+                    transparent 70%
+                ),
+                radial-gradient(
+                    ellipse 64% 38% at 18% 43%,
+                    rgba(17, 40, 77, 0.64) 0 30%,
+                    rgba(17, 40, 77, 0.20) 54%,
+                    transparent 74%
+                ),
+                radial-gradient(
+                    ellipse 54% 34% at 80% 42%,
+                    rgba(244, 239, 223, 0.22) 0 24%,
+                    rgba(170, 185, 191, 0.12) 49%,
+                    transparent 72%
+                ),
+                radial-gradient(
+                    ellipse 56% 33% at 5% 78%,
+                    rgba(213, 179, 112, 0.20) 0 25%,
+                    transparent 68%
+                ),
+                radial-gradient(
+                    ellipse 72% 38% at 72% 82%,
+                    rgba(17, 40, 77, 0.54) 0 31%,
+                    rgba(16, 26, 44, 0.18) 55%,
+                    transparent 76%
+                ),
+                linear-gradient(
+                    145deg,
+                    #5E7D92 0%,
+                    #3F6680 27%,
+                    #264B6F 58%,
+                    #385E77 100%
+                ) !important;
+            background-attachment: fixed !important;
+        }
+
+        /* 微颗粒：模拟颜料颗粒与画布纤维 */
+        .stApp::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.34;
+            mix-blend-mode: soft-light;
+            background-image:
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='4' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.56'/%3E%3C/svg%3E");
+        }
+
+        /* 宽而柔和的弧线笔触，不做成过碎的小波纹 */
+        [data-testid="stAppViewContainer"]::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            opacity: 0.26;
+            mix-blend-mode: screen;
+            background-image:
+                repeating-radial-gradient(
+                    ellipse 190px 72px at 14% 21%,
+                    transparent 0 14px,
+                    rgba(244, 239, 223, 0.20) 15px 17px,
+                    transparent 18px 31px
+                ),
+                repeating-radial-gradient(
+                    ellipse 240px 88px at 72% 36%,
+                    transparent 0 18px,
+                    rgba(213, 179, 112, 0.16) 19px 21px,
+                    transparent 22px 39px
+                ),
+                repeating-radial-gradient(
+                    ellipse 210px 78px at 39% 82%,
+                    transparent 0 16px,
+                    rgba(244, 239, 223, 0.14) 17px 19px,
+                    transparent 20px 35px
+                );
+        }
+
+        [data-testid="stHeader"] {
+            background: rgba(244, 239, 223, 0.82) !important;
+            border-bottom: 1px solid rgba(17, 40, 77, 0.10);
+            backdrop-filter: blur(14px);
+        }
+
+        .block-container {
+            position: relative;
+            z-index: 2;
+            max-width: 1240px;
+            padding-top: 2.2rem;
+            padding-bottom: 5rem;
+        }
+
+        /* 侧栏保留深色，但加入暖色与纹理，降低数字界面的生硬感 */
+        [data-testid="stSidebar"] {
+            background:
+                linear-gradient(
+                    165deg,
+                    rgba(16, 26, 44, 0.98),
+                    rgba(17, 40, 77, 0.96) 55%,
+                    rgba(38, 75, 111, 0.96)
+                ) !important;
+            border-right: 1px solid rgba(213, 179, 112, 0.38);
+        }
+
+        [data-testid="stSidebar"]::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            opacity: 0.17;
+            background-image:
+                repeating-radial-gradient(
+                    ellipse 120px 44px at 30% 18%,
+                    transparent 0 11px,
+                    rgba(244, 239, 223, 0.24) 12px 13px,
+                    transparent 14px 25px
+                );
+        }
+
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label {
+            color: var(--paint-ivory) !important;
+        }
+
+        /* 首页主视觉：蓝色画布、奶油色柔光、少量金色颜料 */
+        .ocean-hero {
+            position: relative;
+            isolation: isolate;
+            overflow: hidden;
+            min-height: 300px;
+            margin-bottom: 1.5rem;
+            padding: 3.4rem 3.8rem;
+            border: 1px solid rgba(244, 239, 223, 0.50);
+            border-radius: 34px 28px 38px 26px;
+            background:
+                radial-gradient(
+                    ellipse 54% 78% at 100% 5%,
+                    rgba(244, 239, 223, 0.40) 0 24%,
+                    rgba(213, 179, 112, 0.20) 44%,
+                    transparent 68%
+                ),
+                radial-gradient(
+                    ellipse 48% 68% at 7% 100%,
+                    rgba(16, 26, 44, 0.66) 0 31%,
+                    transparent 68%
+                ),
+                linear-gradient(
+                    135deg,
+                    rgba(17, 40, 77, 0.96),
+                    rgba(38, 75, 111, 0.92) 61%,
+                    rgba(94, 125, 146, 0.90)
+                ) !important;
+            box-shadow:
+                0 22px 55px rgba(16, 26, 44, 0.20),
+                inset 0 0 70px rgba(244, 239, 223, 0.08);
+        }
+
+        .ocean-hero::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+            opacity: 0.38;
+            mix-blend-mode: soft-light;
+            background-image:
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.045 .42' numOctaves='3' seed='21'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)' opacity='.68'/%3E%3C/svg%3E");
+        }
+
+        .ocean-hero::after {
+            content: "";
+            position: absolute;
+            z-index: -1;
+            width: 520px;
+            height: 330px;
+            right: -95px;
+            bottom: -185px;
+            border: 28px double rgba(213, 179, 112, 0.28);
+            border-radius: 49% 51% 46% 54%;
+            transform: rotate(-8deg);
+            filter: blur(0.2px);
+        }
+
+        .hero-eyebrow {
+            color: var(--paint-gold) !important;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.24em;
+        }
+
+        .hero-title {
+            color: var(--paint-ivory) !important;
+            font-family: Georgia, "Times New Roman", serif;
+            font-weight: 500;
+            text-shadow: 0 2px 18px rgba(16, 26, 44, 0.26);
+        }
+
+        .hero-subtitle {
+            color: rgba(244, 239, 223, 0.92) !important;
+            line-height: 1.9;
+        }
+
+        /* 奶油色内容卡片，让整体更轻、更柔和 */
+        [data-testid="stForm"],
+        [data-testid="stExpander"],
+        .stTabs [data-baseweb="tab-panel"] {
+            color: var(--paint-ink) !important;
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(244, 239, 223, 0.95),
+                    rgba(244, 239, 223, 0.86)
+                ) !important;
+            border: 1px solid rgba(213, 179, 112, 0.48) !important;
+            border-radius: 24px 18px 26px 20px !important;
+            box-shadow:
+                0 18px 42px rgba(16, 26, 44, 0.16),
+                inset 0 1px 0 rgba(255, 255, 255, 0.72) !important;
+            backdrop-filter: blur(10px);
+        }
+
+        [data-testid="stForm"] h1,
+        [data-testid="stForm"] h2,
+        [data-testid="stForm"] h3,
+        [data-testid="stForm"] p,
+        [data-testid="stForm"] label,
+        [data-testid="stExpander"] h1,
+        [data-testid="stExpander"] h2,
+        [data-testid="stExpander"] h3,
+        [data-testid="stExpander"] p,
+        [data-testid="stExpander"] label,
+        .stTabs [data-baseweb="tab-panel"] p,
+        .stTabs [data-baseweb="tab-panel"] label {
+            color: var(--paint-ink) !important;
+        }
+
+        input,
+        textarea,
+        div[data-baseweb="select"] > div {
+            color: var(--paint-ink) !important;
+            background: rgba(255, 253, 246, 0.88) !important;
+            border-color: rgba(38, 75, 111, 0.22) !important;
+            box-shadow: inset 0 1px 7px rgba(17, 40, 77, 0.06);
+        }
+
+        input:focus,
+        textarea:focus {
+            border-color: var(--paint-gold) !important;
+            box-shadow: 0 0 0 2px rgba(213, 179, 112, 0.24) !important;
+        }
+
+        /* 提示条使用暖白而不是冷灰 */
+        .source-note {
+            color: var(--paint-ink) !important;
+            background:
+                linear-gradient(
+                    100deg,
+                    rgba(244, 239, 223, 0.98),
+                    rgba(244, 239, 223, 0.88)
+                ) !important;
+            border-left: 6px solid var(--paint-gold) !important;
+            border-radius: 6px 18px 18px 6px !important;
+            box-shadow: 0 10px 28px rgba(16, 26, 44, 0.12);
+        }
+
+        /* 按钮改为柔和金色，成为页面唯一强暖色焦点 */
+        .stButton > button,
+        [data-testid="stFormSubmitButton"] > button {
+            color: var(--paint-ink) !important;
+            background:
+                linear-gradient(
+                    120deg,
+                    #E1C58E,
+                    var(--paint-gold)
+                ) !important;
+            border: 1px solid rgba(244, 239, 223, 0.70) !important;
+            box-shadow: 0 9px 24px rgba(16, 26, 44, 0.17) !important;
+        }
+
+        .stButton > button:hover,
+        [data-testid="stFormSubmitButton"] > button:hover {
+            color: var(--paint-ink) !important;
+            filter: brightness(1.05);
+            transform: translateY(-1px);
+        }
+
+        div[data-testid="stMetric"] {
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(244, 239, 223, 0.98),
+                    rgba(225, 197, 142, 0.72)
+                ) !important;
+            border: 1px solid rgba(213, 179, 112, 0.56) !important;
+            border-radius: 20px 15px 22px 16px !important;
+            box-shadow: 0 13px 30px rgba(16, 26, 44, 0.14) !important;
+        }
+
+        div[data-testid="stMetric"] * {
+            color: var(--paint-ink) !important;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            color: rgba(244, 239, 223, 0.88) !important;
+            background: rgba(17, 40, 77, 0.54) !important;
+            border: 1px solid rgba(244, 239, 223, 0.22);
+        }
+
+        .stTabs [aria-selected="true"] {
+            color: var(--paint-ink) !important;
+            background: var(--paint-gold) !important;
+        }
+
+        hr {
+            border-color: rgba(244, 239, 223, 0.38) !important;
+        }
+
+        @media (max-width: 700px) {
+            .ocean-hero {
+                min-height: 250px;
+                padding: 2.5rem 1.6rem;
+                border-radius: 25px 20px 28px 20px;
+            }
+
+            .hero-title {
+                font-size: 3.3rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def normalize_url(url: str) -> str:
     """补齐协议并拒绝明显非法地址。"""
