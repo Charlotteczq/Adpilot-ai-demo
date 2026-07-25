@@ -2317,28 +2317,18 @@ def render_summary(result: dict[str, Any]) -> None:
 
 
 def render_sidebar() -> tuple[str, str, str, str]:
-    """展示 API 设置，并返回当前配置。"""
+    """展示分析引擎状态；API 地址、Key 与模型只允许由服务器配置。"""
 
     with st.sidebar:
-        st.header("New API 设置")
+        st.header("AI 分析")
         env_key = os.getenv("NEW_API_KEY", "")
         env_base_url = os.getenv("NEW_API_BASE_URL", "")
-        env_model = os.getenv("NEW_API_MODEL", "gpt-4o-mini")
+        env_model = os.getenv("NEW_API_MODEL", "gpt-5.6-sol")
+        api_key = env_key.strip()
+        base_url = env_base_url.strip()
+        model = env_model.strip()
 
-        override_key = st.text_input(
-            "临时 API Key（可选）",
-            value="",
-            type="password",
-            placeholder="服务器已配置时无需填写",
-            help="仅用于本次浏览器会话；服务器中的 Key 不会发送到页面。",
-        )
-        api_key = override_key.strip() or env_key.strip()
-        base_url = st.text_input(
-            "NEW_API_BASE_URL",
-            value=env_base_url,
-            placeholder="https://your-provider.example/v1",
-        )
-        model = st.text_input("模型名称", value=env_model)
+        st.caption(f"当前模型：{model or '服务器尚未配置'}")
         engine_mode = st.radio(
             "分析引擎",
             ["New API 实时生成", "固定宠物水杯案例"],
@@ -2349,13 +2339,10 @@ def render_sidebar() -> tuple[str, str, str, str]:
         if engine_mode == "固定宠物水杯案例":
             st.warning("固定案例会忽略产品输入，只返回预置的宠物饮水杯方案。")
         elif api_key and base_url and model:
-            if override_key.strip():
-                st.success("正在使用本次会话的临时 API Key")
-            else:
-                st.success("API Key 已由服务器安全配置")
+            st.success("实时分析服务已由服务器安全配置")
         else:
-            st.warning("请填写 Key、Base URL 和模型名称后再生成。")
-    return api_key.strip(), base_url.strip(), model.strip(), engine_mode
+            st.warning("实时分析服务尚未完成服务器配置。")
+    return api_key, base_url, model, engine_mode
 
 
 def main() -> None:
@@ -2501,11 +2488,10 @@ def main() -> None:
             st.error("请至少填写产品补充信息或一个公开参考链接。")
         elif not fixed_demo_mode and "*" in api_key:
             st.error(
-                "当前 API Key 包含星号，看起来是被隐藏后的掩码值。"
-                "请到 DeepSeek 开放平台新建 Key，并粘贴创建时显示的完整密钥。"
+                "服务器中的 API Key 配置无效，请联系网站管理员。"
             )
         elif not fixed_demo_mode and (not api_key or not base_url or not model):
-            st.error("请在侧边栏补充 NEW_API_KEY、NEW_API_BASE_URL 和模型名称。")
+            st.error("实时分析服务尚未完成服务器配置，请联系网站管理员。")
         else:
             with st.status("正在生成广告方案…", expanded=True) as status:
                 st.write("1/3 正在整理产品资料")
