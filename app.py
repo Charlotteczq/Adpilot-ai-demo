@@ -885,11 +885,27 @@ def main() -> None:
         st.session_state.pop("analysis_inputs", None)
     st.session_state["_analysis_engine"] = engine_mode
 
-    st.title(APP_TITLE)
-    st.caption("AI 广告策略与七天投放模拟 Demo")
+        st.markdown(
+        """
+        <section class="ocean-hero">
+            <div class="hero-eyebrow">AI Advertising Intelligence</div>
+            <h1 class="hero-title">AdPilot AI</h1>
+            <div class="hero-subtitle">
+                从产品信息到受众洞察、广告创意与七天投放模拟，
+                在一片深海般的策略画布中完成广告方案。
+            </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.markdown(
-        '<div class="source-note">先输入最少产品信息。平台将补全产品、客群、'
-        "广告语和渠道实验；所有七天指标均为模拟预估。</div>",
+        """
+        <div class="source-note">
+            先输入最少产品信息。平台将补全产品、客群、广告语和渠道实验；
+            所有七天指标均为模拟预估。
+        </div>
+        """,
         unsafe_allow_html=True,
     )
     if fixed_demo_mode:
