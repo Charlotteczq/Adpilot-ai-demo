@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from openai import APIConnectionError, AuthenticationError, BadRequestError, OpenAI
 
 from prompt import SYSTEM_PROMPT, build_user_prompt, demo_result_copy
+from strategy_catalog import format_profile, normalize_format_id, platform_factors
 
 
 load_dotenv()
@@ -1565,6 +1566,34 @@ def configure_page() -> None:
             position: relative;
             z-index: 1;
         }
+
+        /* Keep the hero close to the top toolbar on current Streamlit versions. */
+        [data-testid="stMainBlockContainer"],
+        .block-container {
+            padding-top: 3cm !important;
+        }
+
+        /* CSS-only Markdown calls must not create visible vertical gaps. */
+        [data-testid="stElementContainer"]:has(style) {
+            display: none !important;
+        }
+
+        .ocean-hero {
+            margin-top: 0 !important;
+        }
+
+        /* The desktop hero has enough room for the complete sentence. */
+        .hero-subtitle {
+            width: 100%;
+            max-width: none !important;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 1100px) {
+            .hero-subtitle {
+                white-space: normal;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1678,7 +1707,14 @@ def call_new_api(
 ) -> dict[str, Any]:
     """通过 OpenAI 兼容 SDK 调用 New API，并兼容不支持 response_format 的服务。"""
 
-    client = OpenAI(api_key=api_key, base_url=base_url.rstrip("/"))
+    client = OpenAI(
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+        timeout=180,
+        max_retries=3,
+    )
+    json_mode = os.getenv("NEW_API_JSON_MODE", "auto").strip().lower()
+    use_response_format = json_mode not in {"off", "false", "0", "no"}
     common_args = {
         "model": model,
         "messages": [
@@ -1689,26 +1725,35 @@ def call_new_api(
     }
 
     try:
-        response = client.chat.completions.create(
-            **common_args,
-            response_format={"type": "json_object"},
-        )
+        if use_response_format:
+            response = client.chat.completions.create(
+                **common_args,
+                response_format={"type": "json_object"},
+            )
+        else:
+            response = client.chat.completions.create(**common_args)
     except AuthenticationError as exc:
         raise RuntimeError(
-            "DeepSeek 拒绝了当前 API Key（401）。请不要使用 CC Switch 中的掩码值；"
-            "请到 DeepSeek 开放平台重新创建 Key，并原样粘贴完整密钥。"
+            "New API 服务拒绝了当前 API Key（401）。"
+            "请到服务商控制台重新创建 Key，并原样粘贴完整密钥。"
         ) from exc
     except APIConnectionError as exc:
         raise RuntimeError(
-            "无法连接 DeepSeek API，请检查本机网络、防火墙或代理设置。"
+            "无法连接 New API，请检查服务地址、本机网络、防火墙或代理设置。"
         ) from exc
     except BadRequestError as first_error:
         # 部分 OpenAI 兼容服务未实现 response_format，自动重试普通文本模式。
+        if not use_response_format:
+            raise RuntimeError(
+                "New API 拒绝了当前请求，请检查模型名称和服务商参数兼容性。"
+                f"\n技术信息：{first_error}"
+            ) from first_error
         try:
             response = client.chat.completions.create(**common_args)
         except AuthenticationError as exc:
             raise RuntimeError(
-                "DeepSeek 拒绝了当前 API Key（401）。请重新创建并粘贴完整密钥。"
+                "New API 服务拒绝了当前 API Key（401）。"
+                "请重新创建并粘贴完整密钥。"
             ) from exc
         except Exception as second_error:
             raise RuntimeError(
@@ -1727,21 +1772,165 @@ def call_new_api(
     return extract_json_object(content)
 
 
+def clamp_score(value: Any, default: int = 70) -> int:
+    """把模型返回的匹配分数约束到 0-100。"""
+
+    try:
+        return max(0, min(100, int(float(value))))
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_weight(value: Any) -> float:
+    """兼容 0.4、40 和“40%”等模型权重写法。"""
+
+    raw = str(value or "").strip()
+    is_percent = raw.endswith("%")
+    try:
+        weight = float(raw.rstrip("%"))
+    except ValueError:
+        return 0.0
+    if is_percent or weight > 1:
+        weight /= 100
+    return max(0.0, weight)
+
+
+def normalize_creative_formats(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """归一化广告形式；兼容尚未返回新字段的旧模型结果。"""
+
+    items = raw.get("creative_format_recommendations")
+    normalized: list[dict[str, Any]] = []
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            profile = format_profile(item.get("format_id") or item.get("name"))
+            normalized.append(
+                {
+                    **item,
+                    "format_id": profile["id"],
+                    "name": str(item.get("name") or profile["name"]),
+                    "fit_score": clamp_score(item.get("fit_score")),
+                    "production_difficulty": str(
+                        item.get("production_difficulty")
+                        or profile["default_difficulty"]
+                    ),
+                }
+            )
+
+    if not normalized:
+        platforms = raw.get("platform_recommendations")
+        seen: set[str] = set()
+        if isinstance(platforms, dict):
+            for group in platforms.values():
+                if not isinstance(group, list):
+                    continue
+                for platform in group:
+                    if not isinstance(platform, dict):
+                        continue
+                    candidates = platform.get("ad_formats")
+                    if not isinstance(candidates, list):
+                        candidates = []
+                    for candidate in candidates[:1]:
+                        profile = format_profile(candidate)
+                        if profile["id"] in seen:
+                            continue
+                        seen.add(profile["id"])
+                        normalized.append(
+                            {
+                                "format_id": profile["id"],
+                                "name": profile["name"],
+                                "fit_score": 70,
+                                "reason": profile["best_for"],
+                                "funnel_role": "建议验证",
+                                "production_difficulty": profile[
+                                    "default_difficulty"
+                                ],
+                                "required_assets": [],
+                                "creative_concept": {},
+                            }
+                        )
+
+    if not normalized:
+        profile = format_profile("static_image")
+        normalized.append(
+            {
+                "format_id": profile["id"],
+                "name": profile["name"],
+                "fit_score": 65,
+                "reason": "模型未返回广告形式，暂以低成本静态图片作为验证起点。",
+                "funnel_role": "建议验证",
+                "production_difficulty": profile["default_difficulty"],
+                "required_assets": [],
+                "creative_concept": {},
+            }
+        )
+    return sorted(normalized, key=lambda item: item["fit_score"], reverse=True)
+
+
+def normalize_platform_groups(
+    raw_groups: Any, creative_formats: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    """补齐平台的形式、分数和预算权重，并过滤无效条目。"""
+
+    groups = raw_groups if isinstance(raw_groups, dict) else {}
+    default_format = creative_formats[0]["format_id"]
+    normalized_groups: dict[str, list[dict[str, Any]]] = {
+        "domestic": [],
+        "overseas": [],
+    }
+    for group_name in normalized_groups:
+        items = groups.get(group_name)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ad_formats = item.get("ad_formats")
+            first_ad_format = (
+                ad_formats[0] if isinstance(ad_formats, list) and ad_formats else None
+            )
+            profile = format_profile(
+                item.get("primary_format_id")
+                or item.get("primary_format_name")
+                or first_ad_format
+                or default_format
+            )
+            normalized_groups[group_name].append(
+                {
+                    **item,
+                    "name": str(item.get("name") or "未命名平台"),
+                    "fit_score": clamp_score(item.get("fit_score")),
+                    "primary_format_id": profile["id"],
+                    "primary_format_name": str(
+                        item.get("primary_format_name") or profile["name"]
+                    ),
+                    "budget_weight": safe_weight(item.get("budget_weight")),
+                }
+            )
+        normalized_groups[group_name].sort(
+            key=lambda platform: platform["fit_score"], reverse=True
+        )
+    return normalized_groups
+
+
 def normalize_result(raw: dict[str, Any]) -> dict[str, Any]:
     """为模型偶发缺失字段提供安全默认值，避免页面直接崩溃。"""
 
     product = raw.get("product_analysis")
-    platforms = raw.get("platform_recommendations")
+    creative_formats = normalize_creative_formats(raw)
+    platforms = normalize_platform_groups(
+        raw.get("platform_recommendations"), creative_formats
+    )
     return {
         "summary": str(raw.get("summary") or "已生成初步广告测试方案。"),
         "product_analysis": product if isinstance(product, dict) else {},
         "target_users": raw.get("target_users")
         if isinstance(raw.get("target_users"), list)
         else [],
+        "creative_format_recommendations": creative_formats,
         "ad_copy": raw.get("ad_copy") if isinstance(raw.get("ad_copy"), list) else [],
-        "platform_recommendations": platforms
-        if isinstance(platforms, dict)
-        else {"domestic": [], "overseas": []},
+        "platform_recommendations": platforms,
         "assumptions": raw.get("assumptions")
         if isinstance(raw.get("assumptions"), list)
         else [],
@@ -1751,10 +1940,12 @@ def normalize_result(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def stable_seed(product_text: str, platform_name: str) -> int:
-    """用产品与平台生成稳定随机种子，保证现场演示结果可复现。"""
+def stable_seed(product_text: str, platform_name: str, format_id: str) -> int:
+    """用产品、平台与形式生成稳定随机种子，保证演示结果可复现。"""
 
-    digest = hashlib.sha256(f"{product_text}|{platform_name}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        f"{product_text}|{platform_name}|{format_id}".encode("utf-8")
+    ).hexdigest()
     return int(digest[:12], 16)
 
 
@@ -1765,13 +1956,28 @@ def simulate_seven_days(
     platform_budget: float,
     currency: str,
     unit_price: float,
-) -> tuple[pd.DataFrame, dict[str, float]]:
-    """生成用于产品演示的七天预测，不代表真实投放结果。"""
+    goal: str,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """按广告形式与平台匹配度生成七天模拟，不代表真实投放结果。"""
 
     platform_name = str(platform.get("name") or "未知平台")
     difficulty = str(platform.get("difficulty") or "中")
     difficulty_factor = {"低": 1.08, "中": 1.0, "高": 0.9}.get(difficulty, 1.0)
-    rng = random.Random(stable_seed(product_text, platform_name))
+    format_id = normalize_format_id(
+        platform.get("primary_format_id") or platform.get("primary_format_name")
+    )
+    profile = format_profile(format_id)
+    factors = platform_factors(platform_name)
+    fit_score = clamp_score(platform.get("fit_score"), default=70)
+    fit_factor = 0.72 + fit_score * 0.003
+    goal_factor = {
+        "商品购买": 1.0,
+        "收集线索": 1.06,
+        "注册": 1.03,
+        "App 安装": 0.96,
+        "品牌曝光": 0.82,
+    }.get(goal, 1.0)
+    rng = random.Random(stable_seed(product_text, platform_name, format_id))
 
     raw_weights = [rng.uniform(0.85, 1.15) for _ in range(7)]
     weight_sum = sum(raw_weights)
@@ -1781,9 +1987,22 @@ def simulate_seven_days(
     total_revenue = 0.0
     for day, spend in enumerate(daily_spend, start=1):
         learning_factor = 0.9 + day * 0.025
-        cpm = rng.uniform(28, 72) / difficulty_factor
-        ctr = rng.uniform(0.008, 0.026) * difficulty_factor * learning_factor
-        cvr = rng.uniform(0.012, 0.055) * difficulty_factor * learning_factor
+        cpm = rng.uniform(*profile["cpm_range"]) * factors["cpm"]
+        ctr = (
+            rng.uniform(*profile["ctr_range"])
+            * factors["ctr"]
+            * difficulty_factor
+            * fit_factor
+            * learning_factor
+        )
+        cvr = (
+            rng.uniform(*profile["cvr_range"])
+            * factors["cvr"]
+            * difficulty_factor
+            * fit_factor
+            * goal_factor
+            * learning_factor
+        )
         impressions = max(1, int(spend / cpm * 1000))
         clicks = max(1, int(impressions * ctr))
         conversions = round(clicks * cvr, 1)
@@ -1815,6 +2034,8 @@ def simulate_seven_days(
         "conversions": total_conversions,
         "cpa": total_spend / total_conversions if total_conversions else 0.0,
         "roas": total_revenue / total_spend if total_spend and unit_price > 0 else 0.0,
+        "format_name": profile["name"],
+        "fit_score": float(fit_score),
     }
     return frame, metrics
 
@@ -1850,6 +2071,20 @@ def render_product_analysis(result: dict[str, Any]) -> None:
         st.subheader("风险与待验证假设")
         render_list(product.get("risks"))
 
+    signal_cols = st.columns(4)
+    signal_cols[0].metric(
+        "视觉演示潜力", str(product.get("visual_demo_potential") or "待判断")
+    )
+    signal_cols[1].metric(
+        "搜索意图潜力", str(product.get("search_intent_potential") or "待判断")
+    )
+    signal_cols[2].metric(
+        "信任要求", str(product.get("trust_requirement") or "待判断")
+    )
+    signal_cols[3].metric(
+        "决策周期", str(product.get("decision_cycle") or "待判断")
+    )
+
 
 def render_target_users(result: dict[str, Any]) -> None:
     """展示目标用户画像。"""
@@ -1868,6 +2103,43 @@ def render_target_users(result: dict[str, Any]) -> None:
             render_list(user.get("pain_points"))
             st.markdown("**沟通重点**")
             st.write(user.get("message") or "暂无")
+
+
+def render_creative_formats(result: dict[str, Any]) -> None:
+    """展示产品与广告形式的匹配结论。"""
+
+    st.header("广告形式匹配")
+    st.caption("先判断产品适合怎样表达，再选择能够承载该形式的平台。")
+    formats = result.get("creative_format_recommendations")
+    if not isinstance(formats, list) or not formats:
+        formats = normalize_creative_formats(result)
+    if not formats:
+        st.info("模型暂未返回广告形式建议。")
+        return
+
+    columns = st.columns(min(3, len(formats)))
+    for index, item in enumerate(formats):
+        with columns[index % len(columns)]:
+            name = str(item.get("name") or f"形式 {index + 1}")
+            score = clamp_score(item.get("fit_score"))
+            st.subheader(name)
+            st.metric("产品匹配度", f"{score} / 100")
+            st.progress(score / 100)
+            st.write(item.get("reason") or "暂无匹配理由")
+            st.markdown(
+                f"**漏斗角色：** {item.get('funnel_role') or '待确认'}  \n"
+                f"**制作难度：** "
+                f"{item.get('production_difficulty') or '待确认'}"
+            )
+            st.markdown("**所需素材**")
+            render_list(item.get("required_assets"))
+
+            concept = item.get("creative_concept")
+            if isinstance(concept, dict) and concept:
+                st.markdown("**创意骨架**")
+                st.write(f"钩子：{concept.get('hook') or '待设计'}")
+                st.write(f"结构：{concept.get('structure') or '待设计'}")
+                st.write(f"CTA：{concept.get('cta') or '待设计'}")
 
 
 def render_ad_copy(result: dict[str, Any]) -> None:
@@ -1896,11 +2168,18 @@ def render_platform(
     platform_budget: float,
     currency: str,
     unit_price: float,
+    goal: str,
 ) -> None:
     """展示单个平台建议及其七天模拟。"""
 
     name = str(platform.get("name") or "未命名平台")
     st.subheader(name)
+    st.markdown(
+        f"**投放位置：** {platform.get('placement') or '待确认'}　"
+        f"**平台匹配度：** {clamp_score(platform.get('fit_score'))} / 100　"
+        f"**首选广告形式：** "
+        f"{platform.get('primary_format_name') or format_profile(platform.get('primary_format_id'))['name']}"
+    )
     st.write(platform.get("reason") or "暂无推荐理由")
 
     detail_cols = st.columns(4)
@@ -1919,8 +2198,24 @@ def render_platform(
         st.markdown("**预算建议**")
         st.write(platform.get("budget_advice") or "建议先做小预算测试")
 
+    experiment = platform.get("experiment")
+    if isinstance(experiment, dict) and experiment:
+        st.markdown("**七天 A/B 实验**")
+        st.write(f"验证假设：{experiment.get('hypothesis') or '待确认'}")
+        experiment_cols = st.columns(3)
+        experiment_cols[0].write(
+            f"A：{experiment.get('variant_a') or '待设计'}"
+        )
+        experiment_cols[1].write(
+            f"B：{experiment.get('variant_b') or '待设计'}"
+        )
+        experiment_cols[2].write(
+            f"成功指标：{experiment.get('success_metric') or '待确认'}"
+        )
+
     st.markdown(
-        '<div class="simulation-note">以下为算法模拟预估，不是实际投放数据或收益承诺。</div>',
+        '<div class="simulation-note">以下按“产品匹配度 × 广告形式 × 平台”'
+        '生成算法模拟预估，不是实际投放数据或收益承诺。</div>',
         unsafe_allow_html=True,
     )
     frame, metrics = simulate_seven_days(
@@ -1929,6 +2224,7 @@ def render_platform(
         platform_budget=platform_budget,
         currency=currency,
         unit_price=unit_price,
+        goal=goal,
     )
     metric_cols = st.columns(5)
     metric_cols[0].metric("七天预算", f"{currency} {metrics['spend']:,.0f}")
@@ -1938,6 +2234,10 @@ def render_platform(
     metric_cols[4].metric(
         "预估 CPA",
         f"{currency} {metrics['cpa']:,.2f}" if metrics["cpa"] else "暂无",
+    )
+    st.caption(
+        f"模拟依据：{metrics['format_name']}；平台匹配度 "
+        f"{metrics['fit_score']:.0f}/100。所有基准均为 Demo 内置相对参数。"
     )
 
     chart_frame = frame.set_index("日期")[["点击", "转化"]]
@@ -1954,27 +2254,42 @@ def render_platform_tabs(
     total_budget: float,
     currency: str,
     unit_price: float,
+    goal: str,
 ) -> None:
     """按国内和海外 Tab 展示平台与模拟数据。"""
 
     st.header("平台推荐与七天模拟")
-    st.caption("每个平台使用相同总预算拆分规则，便于 Demo 中比较；上线前需替换为真实平台数据。")
+    st.caption(
+        "国内与海外视为两套备选市场方案；每个 Tab 都按平台权重分配同一笔七天总预算。"
+        "上线前需替换为真实平台数据。"
+    )
     groups = result["platform_recommendations"]
     domestic = groups.get("domestic") if isinstance(groups, dict) else []
     overseas = groups.get("overseas") if isinstance(groups, dict) else []
-    all_count = max(1, len(domestic or []) + len(overseas or []))
-    platform_budget = total_budget / all_count
-
     domestic_tab, overseas_tab = st.tabs(["国内平台", "海外平台"])
     for tab, platforms in ((domestic_tab, domestic), (overseas_tab, overseas)):
         with tab:
             if not platforms:
                 st.info("暂无平台建议。")
                 continue
+            weights = [
+                safe_weight(platform.get("budget_weight"))
+                if isinstance(platform, dict)
+                else 0.0
+                for platform in platforms
+            ]
+            if sum(weights) <= 0:
+                weights = [
+                    float(clamp_score(platform.get("fit_score")))
+                    for platform in platforms
+                ]
+            weight_sum = sum(weights) or float(len(platforms))
             for index, platform in enumerate(platforms):
+                platform_budget = total_budget * weights[index] / weight_sum
                 with st.expander(
                     f"{platform.get('name') or f'平台 {index + 1}'} · "
-                    f"七天模拟预估",
+                    f"{platform.get('primary_format_name') or '首选形式'} · "
+                    f"预算 {currency} {platform_budget:,.0f}",
                     expanded=index == 0,
                 ):
                     render_platform(
@@ -1983,6 +2298,7 @@ def render_platform_tabs(
                         platform_budget=platform_budget,
                         currency=currency,
                         unit_price=unit_price,
+                        goal=goal,
                     )
 
 
@@ -2061,10 +2377,7 @@ def main() -> None:
         <section class="ocean-hero">
             <div class="hero-eyebrow">AI Advertising Intelligence</div>
             <h1 class="hero-title">AdPilot AI</h1>
-            <div class="hero-subtitle">
-                从产品信息到受众洞察、广告创意与七天投放模拟，
-                在一片深海般的策略画布中完成广告方案。
-            </div>
+            <div class="hero-subtitle">从产品信息到受众洞察、广告创意与七天投放模拟，在一片深海般的策略画布中完成广告方案。</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -2147,6 +2460,28 @@ def main() -> None:
             value=0.0,
             step=10.0,
         )
+        asset_cols = st.columns([3, 1])
+        with asset_cols[0]:
+            available_assets = st.multiselect(
+                "当前已有素材",
+                [
+                    "产品白底图",
+                    "产品场景图",
+                    "产品演示视频",
+                    "真人口播 / 出镜",
+                    "用户评价 / UGC",
+                    "品牌 Logo 与视觉规范",
+                    "可用落地页",
+                ],
+                default=["产品白底图"],
+                help="模型会优先推荐当前素材能够支持、或补拍成本可控的广告形式。",
+            )
+        with asset_cols[1]:
+            production_capacity = st.selectbox(
+                "素材制作能力",
+                ["低：仅能改图和写文案", "中：可拍摄简单短视频", "高：可持续制作多版本素材"],
+                index=1,
+            )
         submitted = st.form_submit_button(
             "生成广告方案",
             type="primary",
@@ -2190,6 +2525,8 @@ def main() -> None:
                             market=market,
                             budget=budget,
                             currency=currency,
+                            available_assets=available_assets,
+                            production_capacity=production_capacity,
                         )
                         raw_result = call_new_api(
                             api_key=api_key,
@@ -2204,6 +2541,9 @@ def main() -> None:
                         "budget": budget,
                         "currency": currency,
                         "unit_price": unit_price,
+                        "goal": goal,
+                        "available_assets": available_assets,
+                        "production_capacity": production_capacity,
                         "result_source": engine_mode,
                     }
                     status.update(label="广告方案已生成", state="complete")
@@ -2239,6 +2579,12 @@ def main() -> None:
                 '<span class="result-card-marker"></span>',
                 unsafe_allow_html=True,
             )
+            render_creative_formats(result)
+        with st.container(border=True):
+            st.markdown(
+                '<span class="result-card-marker"></span>',
+                unsafe_allow_html=True,
+            )
             render_ad_copy(result)
         with st.container(border=True):
             st.markdown(
@@ -2251,6 +2597,7 @@ def main() -> None:
                 total_budget=inputs["budget"],
                 currency=inputs["currency"],
                 unit_price=inputs["unit_price"],
+                goal=inputs.get("goal", "商品购买"),
             )
         with st.container(border=True):
             st.markdown(
