@@ -37,6 +37,16 @@ class FetchResult:
     warning: str = ""
 
 
+@dataclass
+class InputAssessment:
+    """产品资料充分度评估。"""
+
+    level: str
+    score: int
+    missing: list[str]
+    basis: str
+
+
 def configure_page() -> None:
     """设置页面与深海油画视觉样式。"""
 
@@ -1594,6 +1604,42 @@ def configure_page() -> None:
                 white-space: normal;
             }
         }
+
+        /* Selected material tags follow the deep-blue visual system. */
+        [data-baseweb="tag"] {
+            color: #F4EFDF !important;
+            background-color: #11284D !important;
+            border-color: rgba(213, 179, 112, 0.48) !important;
+        }
+
+        [data-baseweb="tag"] span,
+        [data-baseweb="tag"] svg {
+            color: #F4EFDF !important;
+            fill: #F4EFDF !important;
+        }
+
+        [data-baseweb="tag"] > span,
+        [data-baseweb="tag"] > div,
+        [data-baseweb="tag"] span > span {
+            background: transparent !important;
+            background-color: transparent !important;
+            box-shadow: none !important;
+        }
+
+        /* BaseWeb keeps a small text-input/caret layer inside multiselects.
+           It must stay transparent or the global input background covers
+           the left edge of the first selected tag. */
+        div[data-baseweb="select"] input {
+            background: transparent !important;
+            background-color: transparent !important;
+            box-shadow: none !important;
+        }
+
+        [data-baseweb="tag"]::before,
+        [data-baseweb="tag"]::after {
+            background: transparent !important;
+            background-color: transparent !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1677,6 +1723,210 @@ def collect_source_context(source_mode: str, url_text: str) -> FetchResult:
         text="\n\n".join(chunks)[:MAX_SCRAPED_CHARS],
         warning=" ".join(warnings),
     )
+
+
+def assess_input_information(
+    *,
+    product_text: str,
+    source_context: str,
+    market: str,
+    unit_price: float,
+    available_assets: list[str],
+) -> InputAssessment:
+    """在调用模型前评估资料充分度，避免把常识推断包装成确定事实。"""
+
+    description = re.sub(r"\s+", " ", product_text.strip())
+    context = re.sub(r"\s+", " ", source_context.strip())
+    combined = f"{description} {context}".strip()
+    score = 0
+    missing: list[str] = []
+
+    if len(description) >= 2 or len(context) >= 80:
+        score += 15
+    else:
+        missing.append("产品名称或品类")
+
+    if len(description) >= 30:
+        score += 20
+    elif len(description) >= 12:
+        score += 10
+    elif len(context) >= 250:
+        score += 20
+    else:
+        missing.append("核心功能、规格与使用场景")
+
+    detail_units = [
+        unit.strip()
+        for unit in re.split(r"[，。；、,\n;]", description)
+        if len(unit.strip()) >= 3
+    ]
+    if len(detail_units) >= 3 or len(context) >= 500:
+        score += 20
+    elif len(detail_units) >= 2:
+        score += 10
+    else:
+        missing.append("核心卖点与竞品差异")
+
+    audience_markers = (
+        "适合",
+        "面向",
+        "用户",
+        "客户",
+        "人群",
+        "消费者",
+        "买家",
+        "用于",
+        "场景",
+    )
+    if any(marker in combined for marker in audience_markers):
+        score += 15
+    else:
+        missing.append("目标用户及购买/使用场景")
+
+    if unit_price > 0 or re.search(r"(售价|价格|客单价|定价|¥|￥|\$|美元|元)", combined):
+        score += 10
+    else:
+        missing.append("售价或价格区间")
+
+    generic_markets = {"", "国内与海外对比", "国内外", "全球"}
+    if market.strip() not in generic_markets:
+        score += 10
+    else:
+        missing.append("优先投放国家、地区或市场")
+
+    if available_assets:
+        score += 5
+    else:
+        missing.append("现有图片、视频、UGC或落地页素材")
+
+    evidence_markers = (
+        "实测",
+        "认证",
+        "专利",
+        "评价",
+        "销量",
+        "转化",
+        "数据",
+        "证明",
+        "案例",
+    )
+    if any(marker in combined for marker in evidence_markers):
+        score += 5
+    else:
+        missing.append("能够验证卖点的证据或历史数据（可选）")
+
+    if score >= 70:
+        level = "充足"
+        basis = "可基于用户资料生成初步方案，但投放前仍需用真实数据验证。"
+    elif score >= 45:
+        level = "有限"
+        basis = "部分结论需要依赖行业常识和 AI 推断，不能视为已验证事实。"
+    else:
+        level = "不足"
+        basis = "信息不足，现按普遍大众理解对产品进行分析。"
+
+    return InputAssessment(
+        level=level,
+        score=score,
+        missing=missing,
+        basis=basis,
+    )
+
+
+def prioritize_follow_up_questions(product_text: str) -> list[str]:
+    """根据产品类型只提出两个最影响广告判断的问题。"""
+
+    text = product_text.strip().lower()
+    trail_camera_markers = (
+        "打猎相机",
+        "狩猎相机",
+        "猎用相机",
+        "野生动物相机",
+        "红外触发相机",
+        "户外触发相机",
+        "trail camera",
+        "game camera",
+    )
+    general_camera_markers = (
+        "相机",
+        "照相机",
+        "微单",
+        "单反",
+        "卡片机",
+        "运动相机",
+        "摄像",
+        "camera",
+        "摄影",
+        "镜头",
+    )
+    software_markers = (
+        "软件",
+        "平台",
+        "系统",
+        "saas",
+        "app",
+        "应用",
+        "小程序",
+    )
+    food_beauty_markers = (
+        "食品",
+        "饮料",
+        "零食",
+        "保健",
+        "护肤",
+        "化妆",
+        "面霜",
+        "精华",
+    )
+    apparel_markers = (
+        "衣",
+        "裤",
+        "鞋",
+        "服装",
+        "箱包",
+        "背包",
+        "首饰",
+    )
+
+    if any(marker in text for marker in trail_camera_markers):
+        return [
+            "这款产品最主要的用途和购买场景是什么？"
+            "例如狩猎追踪、野生动物观察、农场监控或家庭安防。",
+            "最影响购买决定的核心规格是什么？"
+            "例如触发速度、夜视距离、清晰度、防水等级、电池续航或联网方式。",
+        ]
+    if any(marker in text for marker in general_camera_markers):
+        return [
+            "这款相机最主要的拍摄用途和购买场景是什么？"
+            "例如日常记录、旅行、人像、视频创作、专业摄影或户外运动。",
+            "它属于什么类型，最影响购买决定的优势是什么？"
+            "例如微单、单反、卡片机或运动相机，以及画质、便携性、对焦、视频能力或价格优势。",
+        ]
+    if any(marker in text for marker in software_markers):
+        return [
+            "它主要为哪类用户解决什么具体问题？"
+            "请说明个人/企业用户、行业和典型使用场景。",
+            "与用户当前替代方案相比，最关键的功能优势是什么？"
+            "例如节省时间、自动化流程、数据能力或价格。",
+        ]
+    if any(marker in text for marker in food_beauty_markers):
+        return [
+            "产品最重要的成分、功效和可验证依据是什么？"
+            "请只填写能够真实证明的内容。",
+            "最适合的目标用户和消费场景是什么？"
+            "请同时说明售价或价格区间。",
+        ]
+    if any(marker in text for marker in apparel_markers):
+        return [
+            "产品最重要的材质、设计或功能特点是什么？",
+            "主要目标用户和穿戴/使用场景是什么？"
+            "与同价位产品相比有什么明显差异？",
+        ]
+    return [
+        "这个产品最主要解决什么问题，最典型的目标用户和使用场景是什么？",
+        "最值得用于广告的两个核心卖点是什么？"
+        "请补充关键规格、价格或能够验证卖点的证据。",
+    ]
 
 
 def extract_json_object(content: str) -> dict[str, Any]:
@@ -2345,6 +2595,70 @@ def render_sidebar() -> tuple[str, str, str, str]:
     return api_key, base_url, model, engine_mode
 
 
+def generate_analysis(
+    *,
+    request_data: dict[str, Any],
+    fixed_demo_mode: bool,
+    api_key: str,
+    base_url: str,
+    model: str,
+) -> bool:
+    """在用户确认资料处理方式后生成并保存方案。"""
+
+    assessment = request_data["information_assessment"]
+    with st.status("正在生成广告方案…", expanded=True) as status:
+        st.write("1/3 已确认产品资料与分析依据")
+        st.write("2/3 正在分析客群、广告形式与平台")
+        try:
+            if fixed_demo_mode:
+                raw_result = demo_result_copy()
+            else:
+                user_prompt = build_user_prompt(
+                    source_mode=request_data["source_mode"],
+                    product_text=request_data["product_text"],
+                    source_context=request_data["source_context"],
+                    goal=request_data["goal"],
+                    market=request_data["market"],
+                    budget=request_data["budget"],
+                    currency=request_data["currency"],
+                    available_assets=request_data["available_assets"],
+                    production_capacity=request_data["production_capacity"],
+                    information_level=assessment["level"],
+                    missing_information=assessment["missing"],
+                )
+                raw_result = call_new_api(
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
+                    user_prompt=user_prompt,
+                )
+            st.write("3/3 正在生成七天模拟预估")
+            st.session_state["analysis_result"] = normalize_result(raw_result)
+            st.session_state["analysis_inputs"] = {
+                "product_text": request_data["product_text"],
+                "budget": request_data["budget"],
+                "currency": request_data["currency"],
+                "unit_price": request_data["unit_price"],
+                "goal": request_data["goal"],
+                "available_assets": request_data["available_assets"],
+                "production_capacity": request_data["production_capacity"],
+                "information_assessment": assessment,
+                "result_source": request_data["result_source"],
+            }
+            status.update(label="广告方案已生成", state="complete")
+            return True
+        except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            status.update(label="生成失败", state="error")
+            st.error(str(exc))
+        except Exception as exc:
+            status.update(label="生成失败", state="error")
+            st.error(
+                "生成过程中出现意外错误，请检查网络与 API 配置后重试。"
+                f"\n\n技术信息：{exc}"
+            )
+    return False
+
+
 def main() -> None:
     """Streamlit 应用入口。"""
 
@@ -2357,6 +2671,7 @@ def main() -> None:
     if previous_engine and previous_engine != engine_mode:
         st.session_state.pop("analysis_result", None)
         st.session_state.pop("analysis_inputs", None)
+        st.session_state.pop("pending_analysis", None)
     st.session_state["_analysis_engine"] = engine_mode
 
     st.markdown(
@@ -2409,6 +2724,10 @@ def main() -> None:
                 "希望卖给经常遛狗或携宠旅行的人。"
             ),
         )
+        st.info(
+            "先写清楚产品是什么即可。提交后系统会评估资料是否足够；"
+            "如需补充，只会追问对该产品最重要的两个问题，并由你决定是否填写。"
+        )
 
         url_text = ""
         if source_mode == "链接抓取":
@@ -2460,7 +2779,7 @@ def main() -> None:
                     "品牌 Logo 与视觉规范",
                     "可用落地页",
                 ],
-                default=["产品白底图"],
+                default=[],
                 help="模型会优先推荐当前素材能够支持、或补拍成本可控的广告形式。",
             )
         with asset_cols[1]:
@@ -2493,61 +2812,157 @@ def main() -> None:
         elif not fixed_demo_mode and (not api_key or not base_url or not model):
             st.error("实时分析服务尚未完成服务器配置，请联系网站管理员。")
         else:
-            with st.status("正在生成广告方案…", expanded=True) as status:
-                st.write("1/3 正在整理产品资料")
+            with st.spinner("正在检查产品资料…"):
                 fetch_result = collect_source_context(source_mode, url_text)
-                if fetch_result.warning:
-                    st.warning(fetch_result.warning)
-                st.write("2/3 正在分析客群、广告语与平台形式")
-                try:
-                    if fixed_demo_mode:
-                        raw_result = demo_result_copy()
-                    else:
-                        user_prompt = build_user_prompt(
-                            source_mode=source_mode,
-                            product_text=product_text,
-                            source_context=fetch_result.text,
-                            goal=goal,
-                            market=market,
-                            budget=budget,
-                            currency=currency,
-                            available_assets=available_assets,
-                            production_capacity=production_capacity,
-                        )
-                        raw_result = call_new_api(
-                            api_key=api_key,
-                            base_url=base_url,
-                            model=model,
-                            user_prompt=user_prompt,
-                        )
-                    st.write("3/3 正在生成七天模拟预估")
-                    st.session_state["analysis_result"] = normalize_result(raw_result)
-                    st.session_state["analysis_inputs"] = {
-                        "product_text": product_text,
-                        "budget": budget,
-                        "currency": currency,
-                        "unit_price": unit_price,
-                        "goal": goal,
-                        "available_assets": available_assets,
-                        "production_capacity": production_capacity,
-                        "result_source": engine_mode,
-                    }
-                    status.update(label="广告方案已生成", state="complete")
-                except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
-                    status.update(label="生成失败", state="error")
-                    st.error(str(exc))
-                except Exception as exc:
-                    status.update(label="生成失败", state="error")
-                    st.error(
-                        "生成过程中出现意外错误，请检查网络与 API 配置后重试。"
-                        f"\n\n技术信息：{exc}"
+            if fetch_result.warning:
+                st.warning(fetch_result.warning)
+
+            information_assessment = assess_input_information(
+                product_text=product_text,
+                source_context=fetch_result.text,
+                market=market,
+                unit_price=unit_price,
+                available_assets=available_assets,
+            )
+            request_data = {
+                "source_mode": source_mode,
+                "product_text": product_text,
+                "source_context": fetch_result.text,
+                "goal": goal,
+                "market": market,
+                "budget": budget,
+                "currency": currency,
+                "unit_price": unit_price,
+                "available_assets": available_assets,
+                "production_capacity": production_capacity,
+                "information_assessment": {
+                    "level": information_assessment.level,
+                    "score": information_assessment.score,
+                    "missing": information_assessment.missing,
+                    "basis": information_assessment.basis,
+                },
+                "result_source": engine_mode,
+            }
+
+            if fixed_demo_mode or information_assessment.level == "充足":
+                st.session_state.pop("pending_analysis", None)
+                generate_analysis(
+                    request_data=request_data,
+                    fixed_demo_mode=fixed_demo_mode,
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
+                )
+            else:
+                request_data["follow_up_questions"] = prioritize_follow_up_questions(
+                    product_text
+                )
+                st.session_state["pending_analysis"] = request_data
+                st.session_state.pop("analysis_result", None)
+                st.session_state.pop("analysis_inputs", None)
+
+    pending_analysis = st.session_state.get("pending_analysis")
+    if isinstance(pending_analysis, dict):
+        pending_assessment = pending_analysis["information_assessment"]
+        questions = pending_analysis.get("follow_up_questions") or []
+        st.warning(
+            "当前信息不足，已暂停生成广告方案。"
+            f"资料充分度：{pending_assessment['score']}/100。"
+            "你可以补充下面两个最重要的信息，也可以明确选择不补充。"
+        )
+        with st.form("information_follow_up_form"):
+            answers: list[str] = []
+            for index, question in enumerate(questions[:2], start=1):
+                answers.append(
+                    st.text_area(
+                        f"{index}. {question}",
+                        height=90,
+                        key=f"follow_up_answer_{index}",
                     )
+                )
+            action_cols = st.columns(2)
+            with action_cols[0]:
+                supplement_and_continue = st.form_submit_button(
+                    "补充后继续生成",
+                    type="primary",
+                    width="stretch",
+                )
+            with action_cols[1]:
+                skip_and_continue = st.form_submit_button(
+                    "不补充，按大众理解继续",
+                    width="stretch",
+                )
+
+        if supplement_and_continue:
+            answered_pairs = [
+                (question, answer.strip())
+                for question, answer in zip(questions[:2], answers[:2])
+                if answer.strip()
+            ]
+            if not answered_pairs:
+                st.error("请至少回答其中一个问题，或选择“不补充，按大众理解继续”。")
+            else:
+                supplement_lines = [
+                    f"{question}\n用户回答：{answer}"
+                    for question, answer in answered_pairs
+                ]
+                pending_analysis["product_text"] = (
+                    f"{pending_analysis['product_text'].strip()}\n\n"
+                    "【用户补充信息】\n"
+                    + "\n\n".join(supplement_lines)
+                )
+                refreshed = assess_input_information(
+                    product_text=pending_analysis["product_text"],
+                    source_context=pending_analysis["source_context"],
+                    market=pending_analysis["market"],
+                    unit_price=pending_analysis["unit_price"],
+                    available_assets=pending_analysis["available_assets"],
+                )
+                pending_analysis["information_assessment"] = {
+                    "level": refreshed.level,
+                    "score": refreshed.score,
+                    "missing": refreshed.missing,
+                    "basis": refreshed.basis,
+                }
+                if generate_analysis(
+                    request_data=pending_analysis,
+                    fixed_demo_mode=False,
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
+                ):
+                    st.session_state.pop("pending_analysis", None)
+
+        if skip_and_continue:
+            pending_analysis["information_assessment"]["basis"] = (
+                "信息不足，现按普遍大众理解对产品进行分析。"
+            )
+            if generate_analysis(
+                request_data=pending_analysis,
+                fixed_demo_mode=False,
+                api_key=api_key,
+                base_url=base_url,
+                model=model,
+            ):
+                st.session_state.pop("pending_analysis", None)
 
     result = st.session_state.get("analysis_result")
     inputs = st.session_state.get("analysis_inputs")
     if result and inputs:
         st.divider()
         st.caption(f"本次方案来源：{inputs.get('result_source', '未知')}")
+        information_assessment = inputs.get("information_assessment")
+        if (
+            isinstance(information_assessment, dict)
+            and information_assessment.get("level") != "充足"
+            and inputs.get("result_source") != "固定宠物水杯案例"
+        ):
+            st.warning(
+                f"{information_assessment.get('basis')} "
+                f"资料充分度：{information_assessment.get('score', 0)}/100。"
+                "以下产品定位、客群和投放建议包含尚未验证的 AI 推断。"
+                f"建议补充：{'、'.join(information_assessment.get('missing') or [])}"
+            )
         with st.container(border=True):
             st.markdown(
                 '<span class="result-card-marker"></span>',
